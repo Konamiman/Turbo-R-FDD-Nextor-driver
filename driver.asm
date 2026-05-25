@@ -210,8 +210,8 @@
 ;
 ;=============================================================================
 
-	INCLUDE ../../../../sdk/asm/constants/driver_result_codes.inc
-	INCLUDE ../../../../sdk/asm/constants/dos_errors.inc
+	INCLUDE asm/constants/driver_result_codes.inc
+	INCLUDE asm/constants/dos_errors.inc
 
 ;--- TC8566AF FDC registers (memory-mapped in slot 3-2)
 
@@ -229,12 +229,12 @@ S1990:	equ	7FF1h		;bit 4 = ~DC0, bit 5 = ~DC1
 ;    BIOS-compatible trampolines at the standard entry points (see kinit.mac).
 ;    So RDSLT at 000Ch and WRSLT at 0014h work in both ROM and RAM variants.
 
-	INCLUDE ../../../../sdk/asm/constants/msx_bios.inc
+	INCLUDE asm/constants/msx_bios.inc
 
 ;--- Kernel page 0 routines (ROM variant only; RAM can't access these)
 ;    GWORK / CALBNK come from rom_bank_header.inc.
 
-	INCLUDE ../../../../sdk/asm/constants/rom_bank_header.inc
+	INCLUDE asm/constants/rom_bank_header.inc
 
 ;--- Hardware constants
 
@@ -278,8 +278,9 @@ FMT_SIDES:	equ	WK_XFER+WK_XFER_SIZE	;Number of sides (1 or 2)
 FMT_DRIVE:	equ	FMT_SIDES+1		;0-based drive number
 FMT_TRACK:	equ	FMT_DRIVE+1		;Current track number
 FMT_SIDE:	equ	FMT_TRACK+1		;Current side (0 or 1)
+WK_ERR:	equ	FMT_SIDE+1		;Init-phase error code (see ERR_* below)
 
-WK_SIZE:	equ	FMT_SIDE+1
+WK_SIZE:	equ	WK_ERR+1
 
 else
 
@@ -290,10 +291,21 @@ FMT_DRIVE:	equ	FMT_SIDES+1	;0-based drive number
 FMT_TRACK:	equ	FMT_DRIVE+1	;Current track number
 FMT_SIDE:	equ	FMT_TRACK+1	;Current side (0 or 1)
 WK_SLOT:	equ	FMT_SIDE+1	;FDC slot number (from init data or default)
+WK_ERR:	equ	WK_SLOT+1	;Init-phase error code (see ERR_* below)
 
-WK_SIZE:	equ	WK_SLOT+1
+WK_SIZE:	equ	WK_ERR+1
 
 endif
+
+;--- Init-phase error codes stored in WK_ERR by DETECT_DRIVE and its
+;    sub-routines. Consumed by INIT_NO_DRV / INITR_NO_DRV to print a
+;    specific diagnostic instead of the generic "no drives found".
+
+ERR_CMD_RECAL:	equ	1	;FDC won't accept the Recalibrate command
+ERR_BUSY_STUCK:	equ	2	;FDC busy bit (MSR.4) stuck high after Recalibrate
+ERR_CMD_SENSE:	equ	3	;FDC won't accept the Sense Interrupt command
+ERR_SEEK_TOUT:	equ	4	;Sense Interrupt never reported Seek End
+ERR_SEEK_ERROR:	equ	5	;Seek End set but ST0 indicates abnormal termination
 
 MOTOR_TIMEOUT:	equ 60		;~1 second at 60Hz VDP interrupt
 
@@ -573,9 +585,12 @@ INITR_FDC_ERR:
 
 INITR_NO_DRV:
 	call	MOTOR_OFF
+	;Read context from work area while IX is still valid
+	ld	a,(ix+WK_ERR)
+	ld	c,a		;C = error code
+	ld	b,(ix+WK_RES)	;B = ST0 (only used for ERR_SEEK_ERROR)
 	pop	de		;DE = print routine
-	ld	hl,STR_ERR_NODRIVE
-	call	PRINT_WITH_DE
+	call	PRINT_DETECT_ERR
 	ld	a,RESULT_INIT_ERROR
 	ret
 
@@ -679,9 +694,12 @@ INIT_FDC_ERR:
 
 INIT_NO_DRV:
 	call	MOTOR_OFF
+	;Read context from work area while IX is still valid
+	ld	a,(ix+WK_ERR)
+	ld	c,a		;C = error code
+	ld	b,(ix+WK_RES)	;B = ST0 (only used for ERR_SEEK_ERROR)
 	pop	de		;DE = CHPUT
-	ld	hl,STR_ERR_NODRIVE
-	call	PRINT_WITH_DE
+	call	PRINT_DETECT_ERR
 	ld	a,RESULT_INIT_ERROR
 	ret
 
@@ -713,6 +731,7 @@ DD_WAIT:
 	;Recalibrate
 	ld	(ix+WK_CMD),07h
 	ld	b,2
+	ld	(ix+WK_ERR),ERR_CMD_RECAL  ;Pre-set: if cmd write fails, this is why
 	call	FDC_WRITE_CMD
 	ret	c
 	jp	FDC_WAIT_SEEK
@@ -1678,6 +1697,20 @@ FDC_INIT:
 	ld	a,04h
 	call	WRITE_DOR	;FDC enabled, all motors off
 
+	;Drain the post-reset polling interrupts. NEC-765-derived FDCs
+	;(including the TC8566AF) queue one polling interrupt per drive
+	;position after reset. They must be cleared with 4 SENSE INTERRUPT
+	;calls before any Recalibrate/Seek completion can be observed via
+	;SENSE INTERRUPT. Most emulators skip this, which is why the
+	;driver works there but stalls in Recalibrate on real hardware.
+	ld	b,4
+FDCI_DRAIN:
+	push	bc
+	call	FDC_SENSE_INT
+	pop	bc
+	ret	c		;Abort init if FDC won't accept SENSE_INT
+	djnz	FDCI_DRAIN
+
 	;Send SPECIFY command: SRT=3ms, HUT=240ms, HLT=2ms, Non-DMA
 	ld	(ix+WK_CMD),03h
 	ld	(ix+WK_CMD+1),0DFh
@@ -1783,14 +1816,16 @@ FWS_BSY:
 	ld	a,h
 	or	l
 	jr	nz,FWS_BSY
+	ld	(ix+WK_ERR),ERR_BUSY_STUCK
 	scf			;Timeout
 	ret
 
 FWS_CHK_INIT:
 	ld	hl,07D0h	;Timeout counter
+	ld	(ix+WK_ERR),ERR_CMD_SENSE  ;Pre-set: if SENSE_INT cmd write fails
 FWS_CHK:
 	call	FDC_SENSE_INT
-	jr	c,FWS_TOUT	;FDC_SENSE_INT timed out
+	jr	c,FWS_TOUT	;FDC_SENSE_INT timed out (WK_ERR=ERR_CMD_SENSE)
 	ld	a,(ix+WK_RES)	;ST0
 	bit	5,a		;Seek complete?
 	jr	nz,FWS_DONE
@@ -1798,6 +1833,7 @@ FWS_CHK:
 	ld	a,h
 	or	l
 	jr	nz,FWS_CHK
+	ld	(ix+WK_ERR),ERR_SEEK_TOUT
 FWS_TOUT:
 	scf			;Timeout
 	ret
@@ -1805,6 +1841,7 @@ FWS_TOUT:
 FWS_DONE:
 	and	0C0h		;Check for errors
 	ret	z		;Normal termination (Cy=0)
+	ld	(ix+WK_ERR),ERR_SEEK_ERROR
 	scf
 	ret
 
@@ -2459,7 +2496,7 @@ DIV_NS:
 	ret
 
 
-	INCLUDE ../../../../sdk/asm/code/output_string.asm
+	INCLUDE asm/code/output_string.asm
 
 
 ;--- Print zero-terminated string via character output routine
@@ -2492,6 +2529,105 @@ PRINT_HL:
 JP_IX:	jp	(ix)
 
 
+;--- Print a drive-detection error message
+;    Input: C = error code (1..5), B = ST0 byte (only used for ERR_SEEK_ERROR),
+;           DE = character output routine
+;    Trashes: AF, BC, HL, IX
+;    Codes 0 / out-of-range fall back to the generic STR_ERR_NODRIVE.
+
+PRINT_DETECT_ERR:
+	ld	a,c
+	or	a
+	jr	z,PDE_FALLBACK
+	cp	6
+	jr	nc,PDE_FALLBACK
+
+	push	bc		;Save error code (C) and ST0 (B) across PRINT_WITH_DE
+	dec	a
+	add	a,a		;A = (code-1) * 2
+	ld	h,0
+	ld	l,a
+	ld	bc,STR_DETECT_ERR_TABLE
+	add	hl,bc
+	ld	a,(hl)
+	inc	hl
+	ld	h,(hl)
+	ld	l,a		;HL = string address
+	call	PRINT_WITH_DE
+	pop	bc
+
+	ld	a,c
+	cp	ERR_SEEK_TOUT
+	jr	z,PDE_APPEND_ST0
+	cp	ERR_SEEK_ERROR
+	ret	nz
+PDE_APPEND_ST0:
+	;Append ST0 byte as two hex digits + CRLF
+	ld	a,b
+	call	PRINT_BYTE_HEX
+	jp	PRINT_CRLF
+
+PDE_FALLBACK:
+	ld	hl,STR_ERR_NODRIVE
+	jp	PRINT_WITH_DE
+
+
+;--- Print a byte (A) as two hex digits via DE
+;    Trashes: AF, BC, IX
+;    Preserves: DE, HL
+
+PRINT_BYTE_HEX:
+	push	af
+	rrca
+	rrca
+	rrca
+	rrca
+	call	PRINT_NIBBLE
+	pop	af
+PRINT_NIBBLE:
+	and	0Fh
+	add	a,'0'
+	cp	'0'+10
+	jr	c,PN_OUT
+	add	a,'A'-'0'-10
+PN_OUT:
+	;Fall through to PRINT_CHAR_VIA_DE
+
+
+;--- Print a single character (A) via DE
+;    Same stack-trampoline pattern as the digit print in INITR_DONE / INIT_DONE.
+;    Trashes: AF, IX
+;    Preserves: BC, DE, HL
+
+PRINT_CHAR_VIA_DE:
+	push	hl
+	push	bc
+	ld	c,a		;Stash char in C
+	push	de		;Print routine address (low byte, then high byte)
+	ld	de,0C300h	;JP opcode (C3) + dummy 00
+	push	de
+	ld	ix,1
+	add	ix,sp		;IX -> JP <print> trampoline on stack
+	ld	a,c
+	call	JP_IX
+	pop	de		;discard 0C300
+	pop	de		;restore print routine
+	pop	bc
+	pop	hl
+	ret
+
+
+;--- Print CR + LF via DE
+;    Trashes: AF, IX
+;    Preserves: BC, DE, HL
+
+PRINT_CRLF:
+	ld	a,0Dh
+	call	PRINT_CHAR_VIA_DE
+	ld	a,0Ah
+	jp	PRINT_CHAR_VIA_DE
+
+
 ;=============================================================================
 ;  DATA
 ;=============================================================================
@@ -2512,6 +2648,20 @@ STR_NDRV_2:	db	" drive(s)\r\n",0
 
 STR_ERR_FDC:	db	"FDC not responding\r\n",0
 STR_ERR_NODRIVE: db	"No drives found\r\n",0
+
+;Per-code drive-detection error strings (indexed by ERR_* code - 1).
+STR_ERR_CMD_RECAL:  db	"Drive 0: FDC won't accept Recalibrate\r\n",0
+STR_ERR_BUSY_STUCK: db	"Drive 0: FDC stays busy after Recalibrate\r\n",0
+STR_ERR_CMD_SENSE:  db	"Drive 0: FDC won't accept Sense Interrupt\r\n",0
+STR_ERR_SEEK_TOUT:  db	"Drive 0: Recalibrate timed out, last ST0=",0
+STR_ERR_SEEK_ERR:   db	"Drive 0: Recalibrate failed, ST0=",0
+
+STR_DETECT_ERR_TABLE:
+	dw	STR_ERR_CMD_RECAL
+	dw	STR_ERR_BUSY_STUCK
+	dw	STR_ERR_CMD_SENSE
+	dw	STR_ERR_SEEK_TOUT
+	dw	STR_ERR_SEEK_ERR
 
 ifdef RAM_DRIVER
 STR_SHUTDOWN:	db	"Turbo-R FDD driver unloaded\r\n",0
