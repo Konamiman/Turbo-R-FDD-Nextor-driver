@@ -94,13 +94,15 @@ The [`nextor-dev`](https://github.com/Konamiman/Nextor/pkgs/container/nextor-dev
 ./docker-build.sh --variant NO_UNDOC    # build against the NO_UNDOC kernel base
 ./docker-build.sh --variant CTRL_INV
 ./docker-build.sh --variant NO_UNDOC.SHIFT_INV
-./docker-build.sh --variant all         # build against every base variant
+./docker-build.sh ram                   # the RAM driver (.drv); needs no base
+./docker-build.sh --variant ram         # alias for `ram`
+./docker-build.sh --variant all         # every base variant + both RAM drivers
 ./docker-build.sh clean                 # any extra args are passed to make
 ```
 
-`--variant <suffix>` selects one of the image's kernel base files (`kernel_base<suffix>.dat`); the available suffixes are `NO_UNDOC`, `SHIFT_INV`, `CTRL_INV`, `NO_UNDOC.SHIFT_INV` and `NO_UNDOC.CTRL_INV`. A `*NO_UNDOC*` variant also assembles the driver undoc-free automatically, and the variant suffix is reflected in the output ROM name exactly as with a local build. The default build is a single ROM, so `--variant all` produces six ROMs (one per base variant) in a single container. Run `./docker-build.sh --help` for the full list.
+`--variant <suffix>` selects one of the image's kernel base files (`kernel_base<suffix>.dat`); the available suffixes are `NO_UNDOC`, `SHIFT_INV`, `CTRL_INV`, `NO_UNDOC.SHIFT_INV` and `NO_UNDOC.CTRL_INV`. A `*NO_UNDOC*` variant also assembles the driver undoc-free automatically, and the variant suffix is reflected in the output ROM name exactly as with a local build. `--variant all` builds the ROM against every one of the six base variants and both forms of the RAM driver (default and NO_UNDOC) in a single container — eight files in all. Run `./docker-build.sh --help` for the full list.
 
-Extra arguments are passed straight through to `make`, so the wrapper covers the RAM driver and the FDC slot override too: `./docker-build.sh ram` builds `bin/turbofdd.drv` (the RAM driver doesn't need a kernel base), and `./docker-build.sh FDC_SLOT=8Fh` overrides the FDC slot for the ROM build.
+Extra arguments are passed straight through to `make`, so the wrapper covers the RAM driver and the FDC slot override too: `./docker-build.sh ram` (or its alias `./docker-build.sh --variant ram`) builds `bin/turbofdd.drv`, the RAM driver, which doesn't need a kernel base; and `./docker-build.sh FDC_SLOT=8Fh` overrides the FDC slot for the ROM build.
 
 ### Building with a local toolchain
 

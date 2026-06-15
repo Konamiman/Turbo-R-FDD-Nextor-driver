@@ -8,11 +8,13 @@
 # Usage:
 #   ./docker-build.sh [--variant <suffix>] [--image <ref>] [make args...]
 #
-#   ./docker-build.sh                           # all ROMs, default kernel base
-#   ./docker-build.sh --variant NO_UNDOC        # build against the NO_UNDOC base
+#   ./docker-build.sh                           # the ROM driver, default kernel base
+#   ./docker-build.sh --variant NO_UNDOC        # ROM against the NO_UNDOC base
 #   ./docker-build.sh --variant CTRL_INV
 #   ./docker-build.sh --variant NO_UNDOC.SHIFT_INV
-#   ./docker-build.sh --variant all             # build against every base variant
+#   ./docker-build.sh ram                       # the RAM driver (.drv); needs no base
+#   ./docker-build.sh --variant ram             # alias for `ram`
+#   ./docker-build.sh --variant all             # every base variant + both RAM drivers
 #   ./docker-build.sh clean                     # pass-through make targets
 #   ./docker-build.sh --variant NO_UNDOC distclean
 #
@@ -24,7 +26,10 @@
 #   CTRL_INV            inverted CTRL-at-boot behaviour
 #   NO_UNDOC.SHIFT_INV  combinations of the above
 #   NO_UNDOC.CTRL_INV
-#   all                 build against every one of the above, in one container
+#   ram                 convenience alias for the `ram` target (the RAM driver
+#                       needs no kernel base, so there is no base variant)
+#   all                 every base variant above, in one container, plus both
+#                       RAM drivers (default and NO_UNDOC)
 # Selecting a *.NO_UNDOC.* variant also turns on NO_UNDOC_CPU_INSTRUCTIONS so
 # the driver is assembled undoc-free to match.
 #
@@ -52,6 +57,13 @@ while [ $# -gt 0 ]; do
 	esac
 	shift
 done
+
+# `--variant ram` is a convenience alias for the pass-through `ram` target: the
+# RAM driver needs no kernel base, so there is no base variant to select.
+if [ "$variant" = ram ]; then
+	variant=
+	makeargs="$makeargs ram"
+fi
 
 # Mount the repository root (the script's own directory) at /work regardless of
 # the caller's current directory, and run as the host user so the ROMs written
@@ -86,8 +98,13 @@ for v in "" SHIFT_INV CTRL_INV NO_UNDOC NO_UNDOC.SHIFT_INV NO_UNDOC.CTRL_INV; do
 		base=/opt/nextor/kernel_base/kernel_base.$v.dat
 		case $v in *NO_UNDOC*) undoc=NO_UNDOC_CPU_INSTRUCTIONS=1 ;; *) undoc= ;; esac
 	fi
-	echo ">>> Building variant: ${v:-default}"
+	echo ">>> Building ROM variant: ${v:-default}"
 	make NEXTOR_BASE="$base" $undoc "$@"
+done
+# The RAM driver needs no kernel base; build both its forms (default + NO_UNDOC).
+for u in "" NO_UNDOC_CPU_INSTRUCTIONS=1; do
+	if [ -z "$u" ]; then echo ">>> Building RAM driver: default"; else echo ">>> Building RAM driver: NO_UNDOC"; fi
+	make $u ram
 done
 ' sh $makeargs
 fi
