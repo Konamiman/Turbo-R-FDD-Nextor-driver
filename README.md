@@ -9,7 +9,7 @@ The driver can be built in two flavors:
 | `Nextor-<ver>.TurboRFDD.ROM`          | **ROM driver** (default `make` target). Combined with a Nextor kernel base file to produce a ROM image, ready to be flashed to an ASCII16-mapper cartridge. |
 | `turbofdd.drv`                        | **RAM driver** (via `make ram`). Standalone `.drv` file that loads into a mapped RAM segment at runtime via CALL IDRIVER or DRVROP.COM.                       |
 
-For the ROM driver, `<ver>` and any kernel-base variant suffix (e.g. `.NO_UNDOC.SHIFT_INV`) are picked up automatically from the `NEXTOR_BASE` filename; see [Building](#building) below.
+For the ROM driver, `<ver>` comes from the Nextor SDK and any kernel-base variant suffix (e.g. `.NO_UNDOC.SHIFT_INV`) is picked up automatically from the `NEXTOR_BASE` filename; see [Building](#building) below.
 
 ## Hardware slot configuration
 
@@ -25,15 +25,17 @@ The default slot for the Turbo-R FDC is 3-2 (slot byte `8Bh` = slot 3 + 4×subsl
 | `driver.asm`      | The Turbo-R FDD driver. Conditionally assembled as a ROM driver or a RAM driver depending on the `RAM_DRIVER` build-time symbol. |
 | `chgbnk.asm`      | Bank-switching routine for the ASCII16 mapper used by the cartridge.                     |
 | `Makefile`        | Build rules; see below.                                                                  |
+| `docker-build.sh` | Wrapper that builds the driver in the Nextor dev Docker image (no local toolchain needed). |
 | `external/Nextor` | Git submodule pointing at the Nextor repo, sparse-checkout to the `sdk/` directory only. |
 
 ## Development environment
 
-You need:
+The quickest path needs **nothing but Docker**: see [Building with the Nextor dev Docker image](#building-with-the-nextor-dev-docker-image) below, which supplies the toolchain, the SDK and the kernel base files for you (no submodule or base file to fetch). To build with a local toolchain instead, you need:
 
 - [**Nestor80**](https://github.com/Konamiman/Nestor80) (`N80`) on your `PATH`, or pointed at via the `N80` make variable.
 - **`mknexrom`** on your `PATH`, or pointed at via the `MKNEXROM` make variable. Only needed for the ROM build. The source lives in the Nextor repository under `buildtools/sources/mknexrom.c`.
 - A POSIX **`make`** and `dd` / `cat` (for the ROM build).
+- A Nextor kernel base file (for the ROM build) and the Nextor SDK (the `external/Nextor` submodule, set up with `make setup`).
 
 ## Cloning the repository
 
@@ -81,7 +83,28 @@ make setup
 
 ## Building
 
-### ROM driver (default)
+There are two ways to build: with the **Nextor dev Docker image** (no local toolchain, SDK or kernel base file needed) or with a **local toolchain**.
+
+### Building with the Nextor dev Docker image
+
+The [`nextor-dev`](https://github.com/Konamiman/Nextor/pkgs/container/nextor-dev) image bundles `N80`, `mknexrom`, the Nextor SDK and all six kernel base-file variants, and presets `NEXTOR_BASE` / `NEXTOR_SDK`, so a build needs nothing else on your machine - not even the `external/Nextor` submodule. The `docker-build.sh` wrapper runs the build in a container, mounting this repository and writing the outputs into `bin/` owned by you (not root):
+
+```sh
+./docker-build.sh                       # the ROM driver, default kernel base
+./docker-build.sh --variant NO_UNDOC    # build against the NO_UNDOC kernel base
+./docker-build.sh --variant CTRL_INV
+./docker-build.sh --variant NO_UNDOC.SHIFT_INV
+./docker-build.sh --variant all         # build against every base variant
+./docker-build.sh clean                 # any extra args are passed to make
+```
+
+`--variant <suffix>` selects one of the image's kernel base files (`kernel_base<suffix>.dat`); the available suffixes are `NO_UNDOC`, `SHIFT_INV`, `CTRL_INV`, `NO_UNDOC.SHIFT_INV` and `NO_UNDOC.CTRL_INV`. A `*NO_UNDOC*` variant also assembles the driver undoc-free automatically, and the variant suffix is reflected in the output ROM name exactly as with a local build. The default build is a single ROM, so `--variant all` produces six ROMs (one per base variant) in a single container. Run `./docker-build.sh --help` for the full list.
+
+Extra arguments are passed straight through to `make`, so the wrapper covers the RAM driver and the FDC slot override too: `./docker-build.sh ram` builds `bin/turbofdd.drv` (the RAM driver doesn't need a kernel base), and `./docker-build.sh FDC_SLOT=8Fh` overrides the FDC slot for the ROM build.
+
+### Building with a local toolchain
+
+#### ROM driver (default)
 
 The build needs a Nextor kernel base file, supplied via `NEXTOR_BASE`:
 
@@ -105,9 +128,9 @@ To target a non-default FDC slot, add `FDC_SLOT=<value>`:
 NEXTOR_BASE=/path/to/Nextor-3.0.0.base.dat FDC_SLOT=8Fh make    # slot 3-3
 ```
 
-The Nextor base filename's version and variant suffix (e.g. `.NO_UNDOC.SHIFT_INV`) are mirrored in the output ROM filename. **You are responsible for keeping `NO_UNDOC_CPU_INSTRUCTIONS` consistent with the base file's variant**: the Makefile does not infer it for you.
+The output ROM filename's version comes from the SDK's `nextor-kernel-version.txt`, and any variant suffix (e.g. `.NO_UNDOC.SHIFT_INV`) is taken from the Nextor base filename. **You are responsible for keeping `NO_UNDOC_CPU_INSTRUCTIONS` consistent with the base file's variant**: the Makefile does not infer it for you.
 
-### RAM driver
+#### RAM driver
 
 The RAM driver doesn't need `NEXTOR_BASE` (it isn't combined with a kernel base):
 
@@ -117,7 +140,7 @@ make ram
 
 That produces `bin/turbofdd.drv`. Combine with `NO_UNDOC_CPU_INSTRUCTIONS=1` for an undoc-free build (output goes to `bin/turbofdd.NO_UNDOC.drv`). The hardware slot is *not* baked in at build time; configure it at load time via CALL IDRIVER or DRVROP.COM (see [Hardware slot configuration](#hardware-slot-configuration) above).
 
-### Building without `make`
+#### Building without `make`
 
 The Makefile is the recommended way, but each flavor is produced by a small handful of tool invocations.
 
