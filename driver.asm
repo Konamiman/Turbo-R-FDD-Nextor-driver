@@ -339,11 +339,11 @@ DRIVER_START:
 	jp	CUSTOM_DRIVER_QUERY
 	jp	CUSTOM_DEVICE_QUERY
 	jp	READ_WRITE
-	jp	DRV_DIRECT0
-	jp	DRV_DIRECT1
-	jp	DRV_DIRECT2
-	jp	DRV_DIRECT3
-	jp	DRV_DIRECT4
+
+	;3 reserved entries + 5 direct call entries
+	rept 8*3
+	ret
+	endm
 
 
 ;=============================================================================
@@ -377,29 +377,6 @@ DRV_BASDEV:
 	ret
 
 DRV_EXTBIO:
-DRV_DIRECT0:
-	ret
-	ret
-	ret
-
-DRV_DIRECT1:
-	ret
-	ret
-	ret
-
-DRV_DIRECT2:
-	ret
-	ret
-	ret
-
-DRV_DIRECT3:
-	ret
-	ret
-	ret
-
-DRV_DIRECT4:
-	ret
-	ret
 	ret
 
 CUSTOM_DRIVER_QUERY:
