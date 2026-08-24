@@ -16,7 +16,7 @@
 #   ./docker-build.sh --variant NO_UNDOC.CTRL_INV.KANJI_INV
 #   ./docker-build.sh ram                       # the RAM driver (.drv); needs no base
 #   ./docker-build.sh --variant ram             # alias for `ram`
-#   ./docker-build.sh --variant all             # every base variant + both RAM drivers
+#   ./docker-build.sh --variant all             # every base variant + the RAM driver
 #   ./docker-build.sh clean                     # pass-through make targets
 #   ./docker-build.sh --variant NO_UNDOC distclean
 #
@@ -37,8 +37,8 @@
 #   ram                 convenience alias for the `ram` target (the RAM driver
 #                       needs no kernel base, so there is no base variant)
 #   all                 build against every base file the image ships, plus
-#                       both forms of the RAM driver (default and NO_UNDOC),
-#                       in one container (runs build-all.sh inside it)
+#                       the RAM driver, in one container (runs build-all.sh
+#                       inside it)
 # For the *NO_UNDOC* variants the Makefile assembles the driver undoc-free to
 # match (it infers NO_UNDOC_CPU_INSTRUCTIONS from the base filename).
 #

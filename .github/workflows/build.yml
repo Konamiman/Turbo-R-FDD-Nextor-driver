@@ -42,14 +42,16 @@ jobs:
 
       # The image provides the SDK and kernel base files; docker-build.sh runs
       # build-all.sh inside it, which builds the ROM driver against every
-      # base-file variant the image ships plus both forms of the RAM driver,
-      # writing the outputs to bin/ owned by the runner user.
+      # base-file variant the image ships plus the RAM driver, writing the
+      # outputs to bin/ owned by the runner user.
       - name: Build ROM and RAM drivers against every kernel base variant
         run: ./docker-build.sh --image "$NEXTOR_IMAGE" --variant all
 
-      # One ROM for each of the twelve kernel base variants, plus the two RAM
-      # drivers (default and NO_UNDOC): 14 files in all.
-      - name: Confirm all 14 outputs were produced
+      # One ROM for each of the twelve kernel base variants, plus the RAM
+      # driver: 13 files in all. (There is no NO_UNDOC form of the RAM
+      # driver: it would be byte-identical to the regular one, see the
+      # Makefile.)
+      - name: Confirm all 13 outputs were produced
         run: |
           set -e
           n=0
@@ -60,12 +62,10 @@ jobs:
             [ -n "$f" ] && [ -s "$f" ] || { echo "Missing or empty: bin/Nextor-*.TurboRFDD${base}.ROM"; exit 1; }
             n=$((n + 1))
           done
-          for drv in bin/turbofdd.drv bin/turbofdd.NO_UNDOC.drv; do
-            [ -s "$drv" ] || { echo "Missing or empty: $drv"; exit 1; }
-            n=$((n + 1))
-          done
+          [ -s bin/turbofdd.drv ] || { echo "Missing or empty: bin/turbofdd.drv"; exit 1; }
+          n=$((n + 1))
           total=$(ls bin/*.ROM bin/*.drv | wc -l)
-          [ "$total" -eq 14 ] || { echo "Expected 14 outputs in bin/, found $total"; ls bin; exit 1; }
+          [ "$total" -eq 13 ] || { echo "Expected 13 outputs in bin/, found $total"; ls bin; exit 1; }
           echo "OK: $n outputs present and non-empty"
 
       - name: Upload outputs

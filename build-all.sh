@@ -1,7 +1,7 @@
 #!/bin/sh
 # build-all.sh - build the MSX Turbo-R FDD driver ROMs against every Nextor
-# kernel base-file variant found in a directory, plus both forms of the RAM
-# driver (which needs no kernel base), with the local toolchain (N80,
+# kernel base-file variant found in a directory, plus the RAM driver (which
+# needs no kernel base), with the local toolchain (N80,
 # mknexrom, make and the SDK submodule; see README). To do the same with no
 # local toolchain, use `docker-build.sh --variant all`, which runs this script
 # inside the Nextor dev Docker image.
@@ -32,10 +32,11 @@
 # named after) are used; if none match, the script stops and asks you to sort
 # it out rather than guessing.
 #
-# After the ROMs, the RAM driver (`make ram`) is built in both its forms
-# (bin/turbofdd.drv and bin/turbofdd.NO_UNDOC.drv) - but only when no make
-# arguments besides the cleanup goals are given: other arguments usually
-# name specific targets that the per-variant loop has already run.
+# After the ROMs, the RAM driver (`make ram`, bin/turbofdd.drv) is built -
+# but only when no make arguments besides the cleanup goals are given: other
+# arguments usually name specific targets that the per-variant loop has
+# already run. There is no undoc-free form of the RAM driver - it would be
+# byte-identical to the regular one (see the Makefile).
 #
 # Any arguments are passed through to make (targets, variable overrides), on
 # top of the NEXTOR_BASE set for each variant - except that the cleanup goals
@@ -192,15 +193,11 @@ done
 
 ### RAM driver ###############################################################
 
-# The RAM driver needs no kernel base, so it is outside the per-variant loop:
-# just build both its forms. Skipped when extra make args are given (see the
-# header comment). The undoc flag is passed explicitly (empty and =1) so that
-# both forms are built deterministically even if a NEXTOR_BASE exported in the
-# environment (e.g. the Docker image's preset) would otherwise make the
-# Makefile infer a value from its filename.
+# The RAM driver needs no kernel base, so it is outside the per-variant loop.
+# Skipped when extra make args are given (see the header comment). Only one
+# form is built: an undoc-free RAM driver would be byte-identical to the
+# regular one, so it is deliberately skipped (see the Makefile).
 if [ $# -eq 0 ]; then
-	echo ">>> Building RAM driver: default"
-	"$MAKE" NO_UNDOC_CPU_INSTRUCTIONS= ram
-	echo ">>> Building RAM driver: NO_UNDOC"
-	"$MAKE" NO_UNDOC_CPU_INSTRUCTIONS=1 ram
+	echo ">>> Building RAM driver"
+	"$MAKE" ram
 fi

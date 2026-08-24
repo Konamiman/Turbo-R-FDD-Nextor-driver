@@ -26,7 +26,7 @@ The default slot for the Turbo-R FDC is 3-2 (slot byte `8Bh` = slot 3 + 4×subsl
 | `chgbnk.asm`      | Bank-switching routine for the ASCII16 mapper used by the cartridge.                     |
 | `Makefile`        | Build rules; see below.                                                                  |
 | `docker-build.sh` | Wrapper that builds the driver in the Nextor dev Docker image (no local toolchain needed). |
-| `build-all.sh`    | Builds the ROM driver against every kernel base-file variant found in a directory, plus both RAM drivers, with the local toolchain. |
+| `build-all.sh`    | Builds the ROM driver against every kernel base-file variant found in a directory, plus the RAM driver, with the local toolchain. |
 | `external/Nextor` | Git submodule pointing at the Nextor repo, sparse-checkout to the `sdk/` directory only. |
 
 ## Development environment
@@ -99,11 +99,11 @@ The [`nextor-dev`](https://github.com/Konamiman/Nextor/pkgs/container/nextor-dev
 ./docker-build.sh --variant NO_UNDOC.CTRL_INV.KANJI_INV
 ./docker-build.sh ram                   # the RAM driver (.drv); needs no base
 ./docker-build.sh --variant ram         # alias for `ram`
-./docker-build.sh --variant all         # every base variant + both RAM drivers
+./docker-build.sh --variant all         # every base variant + the RAM driver
 ./docker-build.sh clean                 # any extra args are passed to make
 ```
 
-`--variant <suffix>` selects one of the image's kernel base files (`kernel_base<suffix>.dat`). The variants combine three independent axes: `NO_UNDOC` (no undocumented Z80 opcodes, for Z180-based machines), `SHIFT_INV` _or_ `CTRL_INV` (the SHIFT or CTRL boot key inverted), and `KANJI_INV` (the "6" boot key inverted, so the Kanji driver is installed at boot unless the key is pressed; always the last component of the suffix). The eleven suffixes are therefore `NO_UNDOC`, `SHIFT_INV`, `CTRL_INV`, `NO_UNDOC.SHIFT_INV`, `NO_UNDOC.CTRL_INV`, each of these with `.KANJI_INV` appended, and plain `KANJI_INV`; the twelfth variant is the default, suffix-less base, selected by omitting `--variant`. For a `*NO_UNDOC*` variant the Makefile assembles the driver undoc-free to match, and the variant suffix is reflected in the output ROM name, exactly as with a local build. `--variant all` builds the ROM against every base file the image ships and both forms of the RAM driver (default and NO_UNDOC) in a single container — 14 files in all (this runs `build-all.sh`, described below, inside the image). Run `./docker-build.sh --help` for the full list.
+`--variant <suffix>` selects one of the image's kernel base files (`kernel_base<suffix>.dat`). The variants combine three independent axes: `NO_UNDOC` (no undocumented Z80 opcodes, for Z180-based machines), `SHIFT_INV` _or_ `CTRL_INV` (the SHIFT or CTRL boot key inverted), and `KANJI_INV` (the "6" boot key inverted, so the Kanji driver is installed at boot unless the key is pressed; always the last component of the suffix). The eleven suffixes are therefore `NO_UNDOC`, `SHIFT_INV`, `CTRL_INV`, `NO_UNDOC.SHIFT_INV`, `NO_UNDOC.CTRL_INV`, each of these with `.KANJI_INV` appended, and plain `KANJI_INV`; the twelfth variant is the default, suffix-less base, selected by omitting `--variant`. For a `*NO_UNDOC*` variant the Makefile assembles the driver undoc-free to match, and the variant suffix is reflected in the output ROM name, exactly as with a local build. `--variant all` builds the ROM against every base file the image ships, plus the RAM driver, in a single container — 13 files in all (this runs `build-all.sh`, described below, inside the image). Run `./docker-build.sh --help` for the full list.
 
 The image tag used by default is the kernel version this driver is built for (`3.0.0-beta1`); override it with `--image <ref>` or the `NEXTOR_IMAGE` environment variable. Note that the image's `latest` tag tracks stable kernel releases only, so it is not what you want while the driver targets a prerelease.
 
@@ -143,18 +143,18 @@ The RAM driver doesn't need `NEXTOR_BASE` (it isn't combined with a kernel base)
 make ram
 ```
 
-That produces `bin/turbofdd.drv`. Combine with `NO_UNDOC_CPU_INSTRUCTIONS=1` for an undoc-free build (output goes to `bin/turbofdd.NO_UNDOC.drv`). The hardware slot is *not* baked in at build time; configure it at load time via CALL IDRIVER or DRVROP.COM (see [Hardware slot configuration](#hardware-slot-configuration) above).
+That produces `bin/turbofdd.drv`. There is no undoc-free (`NO_UNDOC`) form of the RAM driver, and `NO_UNDOC_CPU_INSTRUCTIONS` is irrelevant to it: the driver source uses no undocumented Z80 opcodes, so an undoc-free RAM driver would be byte-identical to the regular one (the `NO_UNDOC` ROM variants differ only through the kernel base file they embed). The hardware slot is *not* baked in at build time; configure it at load time via CALL IDRIVER or DRVROP.COM (see [Hardware slot configuration](#hardware-slot-configuration) above).
 
 #### Building every variant at once
 
-To build the ROM for all the kernel base-file variants, plus both forms of the RAM driver (the local counterpart of `docker-build.sh --variant all`), point `NEXTOR_KERNEL_BASE_DIR` at the directory holding the base files and run `build-all.sh`:
+To build the ROM for all the kernel base-file variants, plus the RAM driver (the local counterpart of `docker-build.sh --variant all`), point `NEXTOR_KERNEL_BASE_DIR` at the directory holding the base files and run `build-all.sh`:
 
 ```sh
 NEXTOR_KERNEL_BASE_DIR=/path/to/Nextor/bin/kernel-base ./build-all.sh
 NEXTOR_KERNEL_BASE_DIR=/path/to/Nextor/bin/kernel-base ./build-all.sh clean-bin all   # extra args go to make
 ```
 
-There is no list of variants to maintain: the script scans the directory and builds against every `.dat` file there named by either convention the Makefile understands (`Nextor-<ver>.base[<suffix>].dat`, as built by the Nextor repository, or `kernel_base[<suffix>].dat`, as shipped in the Docker image), ordering the builds so the driver is reassembled only once when crossing into the undoc-free (`*NO_UNDOC*`) group. With the twelve variants of Nextor 3.0 that is 12 ROMs, and the two RAM drivers are built after them — 14 files in all (the RAM drivers are skipped when extra make args are given, since those usually name specific targets such as `distclean`). If the directory mixes base files from several kernel versions, the ones matching the SDK's version are used (and the script stops if none do). Run `./build-all.sh --help` for the details.
+There is no list of variants to maintain: the script scans the directory and builds against every `.dat` file there named by either convention the Makefile understands (`Nextor-<ver>.base[<suffix>].dat`, as built by the Nextor repository, or `kernel_base[<suffix>].dat`, as shipped in the Docker image), ordering the builds so the driver is reassembled only once when crossing into the undoc-free (`*NO_UNDOC*`) group. With the twelve variants of Nextor 3.0 that is 12 ROMs, and the RAM driver is built after them — 13 files in all (the RAM driver is skipped when extra make args are given, since those usually name specific targets such as `distclean`). If the directory mixes base files from several kernel versions, the ones matching the SDK's version are used (and the script stops if none do). Run `./build-all.sh --help` for the details.
 
 #### Building without `make`
 
@@ -196,7 +196,7 @@ N80 driver.asm turbofdd.drv \
     --define-symbols RAM_DRIVER
 ```
 
-For an undoc-free build, add `--define-symbols NO_UNDOC_CPU_INSTRUCTIONS`.
+(There is no undoc-free form of the RAM driver: the driver source uses no undocumented opcodes, so it would be byte-identical to the regular one.)
 
 ## Make variables
 
@@ -206,7 +206,7 @@ For an undoc-free build, add `--define-symbols NO_UNDOC_CPU_INSTRUCTIONS`.
 | `NEXTOR_SDK`                | Path to the Nextor SDK directory (the one containing `asm/`).                                                  | `external/Nextor/sdk`    |
 | `N80`                       | Path to the Nestor80 assembler.                                                                                | `N80` (from `PATH`)      |
 | `MKNEXROM`                  | Path to the `mknexrom` tool.                                                                                   | `mknexrom` (from `PATH`) |
-| `NO_UNDOC_CPU_INSTRUCTIONS` | If non-empty (e.g. `=1`), assemble the driver without undocumented opcodes.                                    | _inferred: `1` if the `NEXTOR_BASE` filename's variant suffix contains `NO_UNDOC`, unset otherwise (so always unset for a `make ram` without `NEXTOR_BASE`)_ |
+| `NO_UNDOC_CPU_INSTRUCTIONS` | If non-empty (e.g. `=1`), assemble the driver without undocumented opcodes. Ignored by the RAM build (an undoc-free RAM driver would be identical to the regular one). | _inferred: `1` if the `NEXTOR_BASE` filename's variant suffix contains `NO_UNDOC`, unset otherwise_ |
 | `FDC_SLOT`                  | ROM build only: override the FDC hardware slot (e.g. `FDC_SLOT=8Fh` for slot 3-3). Ignored by the RAM build.   | _(default 8Bh, slot 3-2)_ |
 
 Cleanup targets:
