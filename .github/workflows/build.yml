@@ -7,6 +7,12 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# The workflow only checks out the repository and uploads a build artifact
+# (which doesn't use the token's repo scopes), so read access to the contents
+# is all the GITHUB_TOKEN needs.
+permissions:
+  contents: read
+
 # The Nextor dev Docker image supplies the whole toolchain (N80, mknexrom), the
 # Nextor SDK and the kernel base files, so CI just runs the build inside it via
 # docker-build.sh — no .NET, Nestor80 download, Nextor checkout, mknexrom build
@@ -17,20 +23,16 @@ on:
 #     private, add a `docker/login-action` step before the build using a PAT
 #     with `read:packages` (the default GITHUB_TOKEN can't read a package in
 #     another repository).
-#   * It pulls the `:latest` tag (the newest published image); override it with
-#     the NEXTOR_IMAGE env var below to pin a specific version.
+#   * The image tag is the kernel version this driver targets (the image's
+#     `latest` tag only tracks stable kernel releases, so it can't be used
+#     while targeting a prerelease). Bump NEXTOR_IMAGE below when moving to a
+#     new kernel version, together with the external/Nextor submodule pin.
 env:
-  NEXTOR_IMAGE: ghcr.io/konamiman/nextor-dev:latest
+  NEXTOR_IMAGE: ghcr.io/konamiman/nextor-dev:3.0.0-beta1
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - { name: "default",  flag: "",                   base_suffix: "" }
-          - { name: "no-undoc", flag: "--variant NO_UNDOC",  base_suffix: ".NO_UNDOC" }
 
     steps:
       - name: Checkout this driver
@@ -39,28 +41,37 @@ jobs:
           submodules: false
 
       # The image provides the SDK and kernel base files; docker-build.sh runs
-      # `make` inside it, writing the outputs to bin/ owned by the runner user.
-      # The ROM build uses the kernel base; the RAM driver (`make ram`) doesn't,
-      # but still honours the NO_UNDOC flag that --variant NO_UNDOC sets.
-      - name: Build ROM driver (${{ matrix.variant.name }})
-        run: ./docker-build.sh --image "$NEXTOR_IMAGE" ${{ matrix.variant.flag }}
+      # build-all.sh inside it, which builds the ROM driver against every
+      # base-file variant the image ships plus both forms of the RAM driver,
+      # writing the outputs to bin/ owned by the runner user.
+      - name: Build ROM and RAM drivers against every kernel base variant
+        run: ./docker-build.sh --image "$NEXTOR_IMAGE" --variant all
 
-      - name: Build RAM driver (${{ matrix.variant.name }})
-        run: ./docker-build.sh --image "$NEXTOR_IMAGE" ${{ matrix.variant.flag }} ram
-
-      - name: Confirm both outputs were produced
+      # One ROM for each of the twelve kernel base variants, plus the two RAM
+      # drivers (default and NO_UNDOC): 14 files in all.
+      - name: Confirm all 14 outputs were produced
         run: |
-          rom="$(ls bin/Nextor-*.TurboRFDD${{ matrix.variant.base_suffix }}.ROM)"
-          drv="$(ls bin/turbofdd${{ matrix.variant.base_suffix }}.drv)"
-          [ -s "$rom" ] || { echo "Missing or empty: $rom"; exit 1; }
-          [ -s "$drv" ] || { echo "Missing or empty: $drv"; exit 1; }
-          echo "OK: $rom"
-          echo "OK: $drv"
+          set -e
+          n=0
+          for base in "" .NO_UNDOC .SHIFT_INV .CTRL_INV .NO_UNDOC.SHIFT_INV .NO_UNDOC.CTRL_INV \
+                      .KANJI_INV .NO_UNDOC.KANJI_INV .SHIFT_INV.KANJI_INV .CTRL_INV.KANJI_INV \
+                      .NO_UNDOC.SHIFT_INV.KANJI_INV .NO_UNDOC.CTRL_INV.KANJI_INV; do
+            f="$(ls bin/Nextor-*.TurboRFDD${base}.ROM 2>/dev/null || true)"
+            [ -n "$f" ] && [ -s "$f" ] || { echo "Missing or empty: bin/Nextor-*.TurboRFDD${base}.ROM"; exit 1; }
+            n=$((n + 1))
+          done
+          for drv in bin/turbofdd.drv bin/turbofdd.NO_UNDOC.drv; do
+            [ -s "$drv" ] || { echo "Missing or empty: $drv"; exit 1; }
+            n=$((n + 1))
+          done
+          total=$(ls bin/*.ROM bin/*.drv | wc -l)
+          [ "$total" -eq 14 ] || { echo "Expected 14 outputs in bin/, found $total"; ls bin; exit 1; }
+          echo "OK: $n outputs present and non-empty"
 
       - name: Upload outputs
         uses: actions/upload-artifact@v4
         with:
-          name: turborfdd-${{ matrix.variant.name }}
+          name: turborfdd-outputs
           path: |
             bin/Nextor-*.TurboRFDD*.ROM
             bin/turbofdd*.drv
