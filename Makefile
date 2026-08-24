@@ -35,7 +35,10 @@
 # To build inside the Nextor dev Docker image instead of with a local
 # toolchain, use the docker-build.sh wrapper (see README): the image provides
 # N80, mknexrom, the SDK and the kernel base files, presetting NEXTOR_BASE and
-# NEXTOR_SDK so this Makefile needs no extra configuration.
+# NEXTOR_SDK so this Makefile needs no extra configuration. To build against
+# every kernel base variant in a directory (one `make` per base file), plus
+# the RAM driver, use build-all.sh, locally or via
+# `docker-build.sh --variant all`.
 
 
 ### Configurable variables ###################################################
@@ -67,13 +70,15 @@ NEXTOR_SDK ?= external/Nextor/sdk
 N80      ?= N80
 MKNEXROM ?= mknexrom
 
-# NO_UNDOC_CPU_INSTRUCTIONS: when set (e.g. =1) the driver is assembled
-# with undocumented Z80 opcodes (those operating on ixh/ixl/iyh/iyl)
-# replaced with documented equivalents, for compatibility with
-# Z180-based MSX machines. For the ROM build, set this whenever
-# NEXTOR_BASE points at a .NO_UNDOC. variant; the driver developer is
-# responsible for keeping the two consistent.
-NO_UNDOC_CPU_INSTRUCTIONS ?=
+# NO_UNDOC_CPU_INSTRUCTIONS: when non-empty (e.g. =1) the driver is assembled
+# with undocumented Z80 opcodes (those operating on ixh/ixl/iyh/iyl) replaced
+# with documented equivalents, for compatibility with Z180-based MSX machines.
+# It is inferred from the NEXTOR_BASE filename (see "Build flag inference"
+# below): set when the base file's variant suffix contains NO_UNDOC, unset
+# otherwise, so the ROM driver always matches the kernel it is combined with.
+# An explicit value (environment or command line, even an empty one) overrides
+# the inference. The flag is irrelevant to the RAM driver: there is no
+# undoc-free form of it, see the comment next to RAM_DRV below.
 
 # FDC_SLOT (ROM build only): override the FDC hardware slot at
 # assembly time. Default 8Bh = slot 3-2 (the standard for the
@@ -118,11 +123,34 @@ else
 _VARIANT :=
 endif
 
+### Build flag inference #####################################################
+
+# The undoc-free kernel bases carry NO_UNDOC in their variant suffix, so unless
+# the flag was given explicitly (`origin` is 'undefined' only when it was not
+# set anywhere, and a deliberate empty value counts as set), derive it from
+# the suffix. A base file with a non-standard name yields no suffix, hence no
+# inference: set the flag by hand in that case.
+ifeq ($(origin NO_UNDOC_CPU_INSTRUCTIONS),undefined)
+NO_UNDOC_CPU_INSTRUCTIONS := $(if $(findstring NO_UNDOC,$(_VARIANT)),1,)
+endif
+
+
+### Output names #############################################################
+
 _DRIVER_PREFIX := Nextor-$(NEXTOR_KERNEL_VERSION).TurboRFDD
 
 ROM       := $(BIN)/$(_DRIVER_PREFIX)$(_VARIANT).ROM
-_RAM_SUFFIX := $(if $(NO_UNDOC_CPU_INSTRUCTIONS),.NO_UNDOC)
-RAM_DRV   := $(BIN)/turbofdd$(_RAM_SUFFIX).drv
+
+# There is deliberately no undoc-free (.NO_UNDOC) form of the RAM driver:
+# this driver's source uses no undocumented Z80 opcodes, so
+# NO_UNDOC_CPU_INSTRUCTIONS does not change the assembled binary, and a
+# turbofdd.NO_UNDOC.drv would be byte-identical to turbofdd.drv (the
+# NO_UNDOC ROM variants differ only through the kernel base file they
+# embed). Should undocumented opcodes ever be introduced in the driver,
+# bring back the flag-suffixed output name this used to be
+# (turbofdd[.NO_UNDOC].drv), so the two forms can't be mistaken for each
+# other.
+RAM_DRV   := $(BIN)/turbofdd.drv
 
 
 ### Assembly flags ###########################################################
@@ -199,7 +227,7 @@ $(ROM): $(TMP)/driver.bin $(TMP)/chgbnk.bin $(TMP)/256.bytes | $(BIN)
 ### RAM driver build #########################################################
 
 # `--define-symbols RAM_DRIVER` selects the RAM build path inside
-# driver.asm. The output goes directly to bin/turbofdd[.NO_UNDOC].drv.
+# driver.asm. The output goes directly to bin/turbofdd.drv.
 $(RAM_DRV): driver.asm $(_BUILD_STAMP) | $(BIN)
 	$(N80) driver.asm $@ $(N80_FLAGS) $(_DEFINES_NO_UNDOC) --define-symbols RAM_DRIVER
 
