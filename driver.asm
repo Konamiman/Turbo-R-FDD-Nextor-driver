@@ -175,7 +175,9 @@
 ;   1. Turn on motor via DOR
 ;   2. Check drive ready:
 ;      a. Write 20h to TDR (let READY come from drive)
-;      b. Poll with SENSE DRIVE STATUS until ST3 bit 5 (READY) is set
+;      b. Poll with SENSE DRIVE STATUS until ST3 bit 5 (READY) is set,
+;         for up to READY_TIMEOUT milliseconds (measured with the system
+;         timer); the error is "not ready" if it's never set
 ;      c. Write 30h to TDR (force READY high for normal operation)
 ;   3. For writes: check ST3 bit 6 (write protect)
 ;   4. Seek to target cylinder (with recalibrate if track 0)
@@ -308,6 +310,15 @@ ERR_SEEK_TOUT:	equ	4	;Sense Interrupt never reported Seek End
 ERR_SEEK_ERROR:	equ	5	;Seek End set but ST0 indicates abnormal termination
 
 MOTOR_TIMEOUT:	equ 60		;~1 second at 60Hz VDP interrupt
+
+;--- Drive ready timeout, in milliseconds. It's measured with the system
+;    timer, a free-running 16-bit counter that increments every 3.911
+;    microseconds (so its high byte, read at port E7h, increments every
+;    1.001 milliseconds). It must cover the motor spin-up time when the motor
+;    was off; a drive with no disk inserted waits for all of it.
+
+SYSTIMER_H:	equ	0E7h
+READY_TIMEOUT:	equ	1500
 
 ;--- RAM variant: work area base address (init data area, 4000h-40FFh)
 
@@ -1892,38 +1903,51 @@ FDC_RECALIBRATE:
 
 
 ;--- Wait for drive ready using SENSE DRIVE STATUS
+;    Gives up after READY_TIMEOUT milliseconds, measured with the system
+;    timer so that the timeout doesn't depend on the CPU speed (with a fixed
+;    number of polls, a drive with no disk took 3.5 seconds to time out
+;    with the R800 but 18 seconds with the Z80). The timer is only read,
+;    never reset, so other users of it aren't disturbed.
 ;    Input: IX = work area (WK_CMD+1 must have unit byte)
 ;    Output: Cy=0 ready (A=ST3), Cy=1 timeout
+;    Preserves: BC, DE, HL
 
 FDC_WAIT_READY:
 	ld	(ix+WK_CMD),04h
 	push	bc
+	push	de
 	push	hl
-	ld	hl,1388h
+	ld	hl,READY_TIMEOUT	;HL = milliseconds left
+	in	a,(SYSTIMER_H)
+	ld	c,a		;C = timer high byte at the last check
 
 FWR_LP:
-	dec	hl
-	ld	a,l
-	or	h
-	jr	z,FWR_TO
-
 	ld	b,2
-	call	FDC_WRITE_CMD
-	jr	c,FWR_LP	;Command failed, retry
+	call	FDC_WRITE_CMD	;(corrupts B and DE, preserves C and HL)
+	jr	c,FWR_TIME	;Command failed, retry
 	call	FDC_READ_RESULT
 	ld	a,(ix+WK_RES)	;ST3
 	bit	5,a		;Ready?
-	jr	z,FWR_LP
+	jr	nz,FWR_OK
 
-	pop	hl
-	pop	bc
-	or	a		;Clear carry
-	ret
+FWR_TIME:
+	in	a,(SYSTIMER_H)
+	ld	b,a
+	sub	c		;A = milliseconds since the last check
+	ld	c,b		; (one loop pass takes far less than 256)
+	ld	e,a
+	ld	d,0
+	or	a
+	sbc	hl,de
+	jr	nc,FWR_LP
+	jr	FWR_END		;Timeout (Cy=1)
 
-FWR_TO:
+FWR_OK:
+	or	a		;Cy=0, A=ST3
+FWR_END:
 	pop	hl
+	pop	de
 	pop	bc
-	scf
 	ret
 
 
